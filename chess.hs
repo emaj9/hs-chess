@@ -17,6 +17,8 @@ down = (-1, 0)
 left = (0, -1)
 right = (0, 1)
 
+infixl 5 +++
+
 --for printing the board
 showSquare :: Maybe Piece -> Char
 showSquare square = case square of
@@ -39,10 +41,12 @@ findPiece (row, col) board = board!!row!!col
 
 pieceToDir :: Piece -> [Dir]
 pieceToDir (unit, _) = case unit of
-  Queen -> [up, down, right, left, up+++right, down+++right, down+++left, up+++left]
   Bishop -> [up+++right, down+++right, down+++left, up+++left]
   Rook -> [up, down, left, right]
-
+  Knight -> [(1, 2), (2, 1), (2, -1), (1, -2), (-1, -2), (-2, -1),(-2, 1), (-1, 2)]
+  --[ (x, y) | x <- [-2, -1, 1, 2], y <- [-2, -1, 1, 2], if abs x /= abs y ]
+  --king or queen
+  _ -> [up, down, right, left, up+++right, down+++right, down+++left, up+++left]
 
 --validMoves :: Pos -> Board -> [(Pos, Maybe Piece)]
 -- TODO: implement the valid moves for knight, king, pawn
@@ -52,9 +56,7 @@ validMoves (row, col) board =
       Just (Pawn, c) -> error"implement pawn move"
       Just (Knight, c) -> error"implement knight move"
       Just piece ->
-        -- gets list of ALL (unit, pos) for each possible movement directions for unit
-        -- dirMoves :: [[(Pos, Maybe Piece)]]
-        let dirMoves = map (\dir -> getSquaresInDir dir (row, col) board) (pieceToDir piece) in
+        let allPossibleMoves = allSquaresInDirs piece (row, col) board in
         -- now let's split the list of squares in a given dir based on empty or occupied
         -- eAndOMoves :: [([(Pos, mPiece)], [(Pos, mPiece)])]
         let emptyAndOccupiedMoves = map (\dirList -> span (\(pos, piece) -> isNothing piece) dirList) dirMoves in
@@ -67,16 +69,31 @@ validMoves (row, col) board =
         emptyAndOccupiedMoves
       Nothing -> error "No piece at this location in call validMoves"
 
+-- gets list of ALL (unit, pos) for each possible movement directions for unit
+allSquaresInDirs :: Piece -> Pos -> Board -> [(Pos, Maybe Piece)]
+allSquaresInDirs (unit, color) pos board =
+  let dirs = pieceToDir (unit, color) in
+  case unit of
+  Knight -> map (\dir -> let newPos = pos + dir in
+                    (newPos, findPiece newPos board)) dirs
+  Pawn -> error"implement"
+  King -> map (\dir -> let newPos = pos + dir in
+                    (newPos, findPiece newPos board)) dirs
+  _ -> concatMap (\dir -> getSquaresInDir dir pos board) dirs
+
+
+isInBounds :: Pos -> Bool
+isInBounds (row, col) = 0 <= row && row <= 7 && 0 <= col && col <= 7
 
 -- might seem wasteful to create this list of all pieces in a given direction
 -- if the plan is to filter this list until we hit a piece (to find a valid moves)
 -- BUT haskell's laziness means we don't *really* construct the full list of pieces in a given dir!
 -- Haskell will compute everything just in time, so if we never use the elements after the cut off, there is no cost
 getSquaresInDir :: Dir -> Pos -> Board -> [(Pos, Maybe Piece)]
-getSquaresInDir dir (row, col) board
-  | 0 >= row || row >= 7 || 0 >= col || col >= 7 = []
+getSquaresInDir dir pos board
+  | isInBounds pos = []
   | otherwise =
-    let newPos = (row, col) +++ dir in
+    let newPos = pos +++ dir in
      (newPos, findPiece newPos board) : (getSquaresInDir dir newPos board)
 
 
