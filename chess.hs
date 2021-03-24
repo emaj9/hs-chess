@@ -62,7 +62,7 @@ validMoves (row, col) board color =
   let piece = findPiece (row, col) board in
     case piece of
       Just (Pawn, c) -> 
-        let maybeMoves = map (\dir -> (pawnMovesFilter (colorPawnMoves dir color) (row, col) board color)) (pieceToDir (Pawn, color)) in
+        let maybeMoves = map (\dir -> pawnMovesFilter (colorPawnMoves dir color) (row, col) board color) (pieceToDir (Pawn, color)) in
           map maybeToList maybeMoves
       --Just (Knight, c) -> error"implement knight move"
       Just piece ->
@@ -83,17 +83,15 @@ pawnMovesFilter moveOption pos board color =
           case dirAbs moveOption of
             (1, 0) -> if destSquareUnoccupied then Just (movedPos, Nothing) else Nothing
             (2, 0) -> case canTwoStep pos color of 
-              True -> 
-                  let firstStep = (pawnMovesFilter (colorPawnMoves (1,0) color) pos board color) in
-                    case firstStep of
-                      Just (pos, occupied) | isNothing occupied -> Just (movedPos, Nothing)
-                      _ -> Nothing
+              True -> if isNothing (findPiece (pos +++ (colorPawnMoves (1,0) Black)) board) && destSquareUnoccupied 
+                  then Just (movedPos, Nothing) else  Nothing
               False -> Nothing
             (1, 1) -> case destinationSquare of 
                       Just (_, c) | c == oppositeColor color -> Just (movedPos, destinationSquare)
                       _ -> Nothing
             _ -> error ("no pattern for moveoptions" ++ (show $ fst $dirAbs moveOption) ++ (show $ fst $dirAbs moveOption))
                       
+canTwoStep :: Pos -> Color -> Bool
 canTwoStep pos color = case color of
   White -> fst pos == 6
   Black -> fst pos == 1
@@ -128,7 +126,7 @@ checkCheck :: Board -> Color -> Bool
 checkCheck board color = 
   error"unimplemented"
   --1: look for the king
-  --2. us all the dirs 
+  --2. us all the dirs
 
 isInBounds :: Pos -> Bool
 isInBounds (row, col) = 0 <= row && row <= 7 && 0 <= col && col <= 7 -- && (row /= 0 && col /= 0)
@@ -164,11 +162,11 @@ initBoard = [
 
 testBoard = [
   map (\x -> Nothing) [0..7],
-  map (\x -> Nothing) [0..7],
   map (\x -> Just (Pawn, Black)) [0..7],
+  map (\x -> Nothing) [0..7],
   [Nothing, Nothing, Nothing, Just (King, Black), Nothing, Nothing, Nothing, Nothing],
   map (\x -> Nothing) [0..7],
-  map (\x -> Nothing) [0..7],
   map (\x -> Just (Pawn, White)) [0..7],
+  map (\x -> Nothing) [0..7],
   map (\x -> Nothing) [0..7]
   ]
