@@ -57,16 +57,6 @@ findPiecePos piece board row = case board of
     Nothing -> findPiecePos piece xs (row+1)
   [] -> Nothing
   
---findPiecePos' :: Board -> Piece -> Maybe Pos
---findPiecePos' board piece = 
-  --case find (not . null) . (zip [0..7]) $ (map 
-    --(filter (\(col, piece') -> piece' == Just piece)
-    -- . zip [0..7] )
-    --(board)) of
-    --Just (row, (col, _):_) -> Just (row, col)
-    --Nothing -> Nothing
-
-
 pieceToDir :: Piece -> [Dir]
 pieceToDir (unit, _) = case unit of
   Bishop -> [up+++right, down+++right, down+++left, up+++left]
@@ -151,11 +141,7 @@ squaresInDir dir pos board isMultiMove
         (newPos, findSquare newPos board) : squaresInDir dir newPos board True
     else [(dir+++pos, findSquare (dir+++pos) board)]
 
---dirUnderAttack :: Dir -> Color -> Pos -> Board -> Bool
-dirUnderAttack dir color pos board = 
-  error"not done" --reachableFilter [squaresInDir dir pos board] color
-
---checkCheck :: Board -> Color -> Bool
+checkCheck :: Board -> Color -> Bool
 checkCheck board color =
   --kingPos == Maybe Pos
   let kingPos = findPiecePos (King, color) board 0 in
@@ -190,27 +176,8 @@ findAttackersOfPos pos (unit, color) board =
     elem (fromJust piece') potentialAttackers)
     unitsInSight
 
---checkCheck :: Board -> Color -> Bool
---checkCheck board color = 
-  ----kingPOs == Maybe Pos
-  --let kingPos = findPiecePos (King, color) board 0 in
-    --if isNothing kingPos then error "King not on board" else 
-    ---- dirs :: [[Dir]]
-    ---- ex dirs = [ [(1,0), (-1,0), left, right], [diags...]]
-    --let dirs = map (\x -> squaresInDir pieceToDir (x, oppositeColor color)) [Rook, Bishop] in
-      ----dirSquares :: [ [ [ (pos) piece), (pos, maybe peice)]] ]
-      --let dirSquares = map (map (\move -> squaresInDir move (fromJust kingPos) board)) dirs in
-        --let dirSquares' = map (`reachableFilter` oppositeColor color) dirSquares in
-          --map (map (filter (\x -> snd x == Just (King, color)))) dirSquares'
-
-  --1: look for the king
-  --2. us all the dirs
-
 isInBounds :: Pos -> Bool
 isInBounds (row, col) = 0 <= row && row <= 7 && 0 <= col && col <= 7 -- && (row /= 0 && col /= 0)
-
-
-
 
 main = do
   --pretty prints the board
