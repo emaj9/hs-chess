@@ -1,6 +1,8 @@
+{-# LANGUAGE TupleSections #-}
 import Data.Char
 import Data.Tuple
 import Data.Maybe
+import Data.List
 
 data PUnit = King | Queen | Rook | Bishop | Knight | Pawn deriving (Eq, Show)
 data Color = White | Black deriving (Eq, Show)
@@ -10,6 +12,7 @@ oppositeColor c = case c of
   White -> Black
 
 type Pos = (Int, Int) --(row, col)
+type Square = (Pos, Maybe Piece)
 type Board = [[Maybe Piece]]
 
 type Dir = Pos
@@ -44,8 +47,25 @@ printableBoard board =
 
 --
 
-findPiece :: Pos -> Board -> Maybe Piece
-findPiece (row, col) board = board!!row!!col
+findSquare :: Pos -> Board -> Maybe Piece
+findSquare (row, col) board = board!!row!!col
+
+findPiecePos :: Piece -> Board -> Int -> Maybe Pos
+findPiecePos piece board row = case board of
+  x:xs -> case findIndex (== Just piece) x of
+    Just x -> Just (row, x)
+    Nothing -> findPiecePos piece xs (row+1)
+  [] -> Nothing
+  
+--findPiecePos' :: Board -> Piece -> Maybe Pos
+--findPiecePos' board piece = 
+  --case find (not . null) . (zip [0..7]) $ (map 
+    --(filter (\(col, piece') -> piece' == Just piece)
+    -- . zip [0..7] )
+    --(board)) of
+    --Just (row, (col, _):_) -> Just (row, col)
+    --Nothing -> Nothing
+
 
 pieceToDir :: Piece -> [Dir]
 pieceToDir (unit, _) = case unit of
@@ -57,33 +77,31 @@ pieceToDir (unit, _) = case unit of
   --king or queen
   _ -> [up, down, right, left, up+++right, down+++right, down+++left, up+++left]
 
---validMoves :: Pos -> Board -> [(Pos, Maybe Piece)]
-validMoves (row, col) board color =
-  let piece = findPiece (row, col) board in
+validMoves :: Pos -> Piece -> Board -> [Square]
+validMoves (row, col) piece board =
     case piece of
-      Just (Pawn, c) -> 
-        let maybeMoves = map (\dir -> pawnMovesFilter (colorPawnMoves dir color) (row, col) board color) (pieceToDir (Pawn, color)) in
-          map maybeToList maybeMoves
+      (Pawn, c) -> 
+        let maybeMoves = map (\dir -> pawnMovesFilter (colorPawnMoves dir c) (row, col) board c) (pieceToDir (Pawn, c)) in
+          catMaybes maybeMoves
       --Just (Knight, c) -> error"implement knight move"
-      Just piece ->
-        let allMoves = allSquaresInDirs piece (row, col) board in
-          reachableSquares allMoves piece
-      Nothing -> error "No piece at this location in call validMoves"
+      piece' ->
+        let movesInDirs = allSquaresPerDirs piece' (row, col) board in
+          concatMap (`reachableFilter` (snd piece')) movesInDirs
 
 colorPawnMoves :: Dir -> Color -> Dir
 colorPawnMoves (row, col) color = 
   if color == White then (row * (-1), col) else (row, col)
 
-pawnMovesFilter :: Dir -> Pos -> Board -> Color -> Maybe (Pos, Maybe Piece)
+pawnMovesFilter :: Dir -> Pos -> Board -> Color -> Maybe Square
 pawnMovesFilter moveOption pos board color = 
   let movedPos = pos +++ moveOption in
     if not $ isInBounds movedPos then Nothing else
-      let destinationSquare = findPiece movedPos board in
+      let destinationSquare = findSquare movedPos board in
         let destSquareUnoccupied = isNothing destinationSquare in
           case dirAbs moveOption of
             (1, 0) -> if destSquareUnoccupied then Just (movedPos, Nothing) else Nothing
             (2, 0) -> case canTwoStep pos color of 
-              True -> if isNothing (findPiece (pos +++ (colorPawnMoves (1,0) Black)) board) && destSquareUnoccupied 
+              True -> if isNothing (findSquare (pos +++ (colorPawnMoves (1,0) Black)) board) && destSquareUnoccupied 
                   then Just (movedPos, Nothing) else  Nothing
               False -> Nothing
             (1, 1) -> case destinationSquare of 
@@ -98,49 +116,99 @@ canTwoStep pos color = case color of
 
 -- takes a list all moves in the correct direction for a piece and returns only the possible moves, 
 -- this means moves that end on empty squares and capturing moves are kept in the output list
-reachableSquares :: [[(Pos, Maybe Piece)]] -> Piece -> [[(Pos, Maybe Piece)]]
-reachableSquares allMoves piece = 
+reachableFilter :: [Square] -> Color -> [Square]
+reachableFilter movesInDir color = 
   -- span will cut the list of all moves in a give dir into
   -- ([All empty squares in that dir], [Squares that are occupied])
-  let emptyAndOccupiedSquares = map (span (\(pos, piece) -> isNothing piece)) allMoves in
+  let (validMoves, maybeMoves)= span (\(pos, piece) -> isNothing piece) movesInDir in
     --we then check the head of [squares that are occupied] to see: can we take from the head of this list?
     -- ex if the first non-empty square is an opponent piece, we add this as a "valid" move (a take)
-    map (\(nothingSquares, justSquares) -> case justSquares of
-            (_, Just (piece', color)) : xs -> 
-              if color /= snd piece then nothingSquares ++ [head justSquares] else nothingSquares
-            _ -> nothingSquares)
-    emptyAndOccupiedSquares
+    case maybeMoves of
+      [] -> validMoves
+      (_, Just (piece', color')):xs | color' /= color -> validMoves ++ [head maybeMoves]
+      _ -> validMoves
 
 
--- gets list of ALL squares ex [(maybe unit, pos)] for each possible movement option for unit
-allSquaresInDirs :: Piece -> Pos -> Board -> [[(Pos, Maybe Piece)]]
-allSquaresInDirs (unit, color) pos board =
+-- gets list of ALL squares ex [(maybe unit, pos)] for each possible movement option for a unit
+allSquaresPerDirs :: Piece -> Pos -> Board -> [[Square]]
+allSquaresPerDirs (unit, color) pos board =
   let dirs = pieceToDir (unit, color) in
-    case unit of
-    Knight -> singleMoveCheck
-    King -> singleMoveCheck
-    _ -> map (\dir -> getSquaresInDir dir pos board) dirs
-    where singleMoveCheck = map (\dir -> let newPos = pos +++ dir in [(newPos, findPiece newPos board)]) (pieceToDir (unit, color))
+    if unit == Queen || unit == Bishop || unit == Rook then 
+        map (\dir -> squaresInDir dir pos board True) dirs
+        else
+          map (\dir -> squaresInDir dir pos board False) dirs
 
-checkCheck :: Board -> Color -> Bool
-checkCheck board color = 
-  error"unimplemented"
+-- might seem wasteful to create this list of all pieces in a given direction
+-- if the plan is to filter this list until we hit a piece (to find a valid moves)
+-- BUT haskell's laziness means we don't *really* construct the full list of pieces in a given dir!
+-- Haskell will compute everything just in time, so if we never use the elements after the cut off, there is no cost
+squaresInDir :: Dir -> Pos -> Board -> Bool -> [Square]
+squaresInDir dir pos board isMultiMove
+  | not $ isInBounds (pos +++ dir) = []
+  | otherwise =
+    if isMultiMove then
+      let newPos = pos +++ dir in
+        (newPos, findSquare newPos board) : squaresInDir dir newPos board True
+    else [(dir+++pos, findSquare (dir+++pos) board)]
+
+--dirUnderAttack :: Dir -> Color -> Pos -> Board -> Bool
+dirUnderAttack dir color pos board = 
+  error"not done" --reachableFilter [squaresInDir dir pos board] color
+
+--checkCheck :: Board -> Color -> Bool
+checkCheck board color =
+  --kingPos == Maybe Pos
+  let kingPos = findPiecePos (King, color) board 0 in
+    if isNothing kingPos then error "King not on board" else 
+      let possibleAttackers = map (,color) [King, Pawn, Rook, Bishop, Knight] in
+        any (\p -> pieceCanAttackPos (fromJust kingPos) p board) possibleAttackers
+
+
+pieceCanAttackPos:: Pos -> Piece -> Board -> Bool
+pieceCanAttackPos pos piece board = 
+  let opColor = oppositeColor $ snd piece in
+  case fst piece of
+    Pawn ->
+      let attackPos'' = if snd piece == White then [(-1, -1), (-1, 1)] else [(1, -1), (1, 1)] in
+        let attackPos' = map (+++ pos) attackPos'' in
+          let attackPos = filter isInBounds attackPos' in
+          let diagSquares = map (`findSquare` board) attackPos in
+            elem (Just (Pawn, opColor)) diagSquares
+    King -> 
+      let attackPos' = map (+++pos) (pieceToDir (King, opColor)) in
+        let attackPos = filter isInBounds attackPos' in
+          elem (Just (King, opColor)) (map (`findSquare` board) attackPos)
+    Queen -> error "bad input"
+    _ -> findAttackersOfPos pos piece board
+    
+findAttackersOfPos pos (unit, color) board =
+  let unitsInSight = validMoves pos (unit, color) board in
+    let color' = oppositeColor color in
+  let potentialAttackers = if unit == Rook || unit == Bishop then [(unit, color'),(Queen, color')] else [(unit, color')] in
+  any (\(pos, piece') -> 
+    isJust piece' &&  
+    elem (fromJust piece') potentialAttackers)
+    unitsInSight
+
+--checkCheck :: Board -> Color -> Bool
+--checkCheck board color = 
+  ----kingPOs == Maybe Pos
+  --let kingPos = findPiecePos (King, color) board 0 in
+    --if isNothing kingPos then error "King not on board" else 
+    ---- dirs :: [[Dir]]
+    ---- ex dirs = [ [(1,0), (-1,0), left, right], [diags...]]
+    --let dirs = map (\x -> squaresInDir pieceToDir (x, oppositeColor color)) [Rook, Bishop] in
+      ----dirSquares :: [ [ [ (pos) piece), (pos, maybe peice)]] ]
+      --let dirSquares = map (map (\move -> squaresInDir move (fromJust kingPos) board)) dirs in
+        --let dirSquares' = map (`reachableFilter` oppositeColor color) dirSquares in
+          --map (map (filter (\x -> snd x == Just (King, color)))) dirSquares'
+
   --1: look for the king
   --2. us all the dirs
 
 isInBounds :: Pos -> Bool
 isInBounds (row, col) = 0 <= row && row <= 7 && 0 <= col && col <= 7 -- && (row /= 0 && col /= 0)
 
--- might seem wasteful to create this list of all pieces in a given direction
--- if the plan is to filter this list until we hit a piece (to find a valid moves)
--- BUT haskell's laziness means we don't *really* construct the full list of pieces in a given dir!
--- Haskell will compute everything just in time, so if we never use the elements after the cut off, there is no cost
-getSquaresInDir :: Dir -> Pos -> Board -> [(Pos, Maybe Piece)]
-getSquaresInDir dir pos board
-  | not $ isInBounds (pos +++ dir) = []
-  | otherwise =
-    let newPos = pos +++ dir in
-     (newPos, findPiece newPos board) : getSquaresInDir dir newPos board
 
 
 
@@ -160,13 +228,24 @@ initBoard = [
   map (\x -> Just (x, Black)) [Rook, Knight, Bishop, King, Queen, Bishop, Knight, Rook]
   ]
 
-testBoard = [
+testBoard' = [
   map (\x -> Nothing) [0..7],
   map (\x -> Just (Pawn, Black)) [0..7],
   map (\x -> Nothing) [0..7],
   [Nothing, Nothing, Nothing, Just (King, Black), Nothing, Nothing, Nothing, Nothing],
   map (\x -> Nothing) [0..7],
+  map (\x -> Just (Queen, White)) [0..7],
+  map (\x -> Nothing) [0..7],
+  map (\x -> Nothing) [0..7]
+  ]
+
+testBoard = [
+  map (\x -> Nothing) [0..7],
   map (\x -> Just (Pawn, White)) [0..7],
+  map (\x -> Nothing) [0..7],
+  [Nothing, Nothing, Nothing, Just (King, Black), Nothing, Nothing, Nothing, Nothing],
+  map (\x -> Nothing) [0..7],
+  map (\x -> Just (Knight, White)) [0..7],
   map (\x -> Nothing) [0..7],
   map (\x -> Nothing) [0..7]
   ]
