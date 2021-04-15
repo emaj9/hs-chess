@@ -4,17 +4,22 @@ import Data.Tuple
 import Data.Maybe
 import Data.List
 
-data PUnit = King | Queen | Rook | Bishop | Knight | Pawn deriving (Eq, Show)
+data Unit = King | Queen | Rook | Bishop | Knight | Pawn deriving (Eq, Show)
 data Color = White | Black deriving (Eq, Show)
-type Piece = (PUnit, Color)
+type Piece = (Unit, Color)
 oppositeColor c = case c of
   Black -> White
   White -> Black
 
+-- Move = Piece maybe(Row | Col) (mX) destination
+data Move = Move Unit (Maybe Int) (Maybe Int) Bool Pos (Maybe Unit) | CastlesKing | CastlesQueen deriving Show
+type Parser a = String -> Maybe (a, String)
+
+
 type Pos = (Int, Int) --(row, col)
 type Square = (Pos, Maybe Piece)
-type Board = [[Maybe Piece]]
-
+type Board = [Rank]
+type Rank = [Maybe Piece]
 type Dir = Pos
 (+++) :: Dir -> Dir -> Dir
 (d0, d1) +++ (d2, d3) = (d0 + d2, d1 + d3)
@@ -30,6 +35,111 @@ right = (0, 1)
 
 infixl 5 +++
 
+parserCombinator :: Parser a -> Parser (Maybe a)
+parserCombinator parser str = 
+  case parser str of
+    Nothing -> Just (Nothing, str)
+    Just (a, str) -> Just (Just a, str)
+
+parserOrElse :: Parser a -> Parser a -> Parser a
+parserOrElse p1 p2 str = 
+  case p1 str of
+    Nothing -> p2 str
+    Just (x, str) -> Just (x, str)
+
+
+parseMove :: Parser Move
+parseMove str = case str of
+  "0-0" -> Just (CastlesKing, "")
+  "0-0-0" -> Just (CastlesQueen, "")
+  _ -> do 
+    parserOrElse longMove shortMove str
+  where 
+    longMove :: Parser Move
+    longMove str = do
+      (moveUnit, str) <- charToUnit str
+      (startCol, str) <- parserCombinator (charToCol) str
+      (startRow, str) <- parserCombinator (charToRow) str
+      (takes, str)    <- charToTakes str
+      (destCol, str) <- charToCol str
+      (destRow, str) <- charToRow str
+      (promotion, str)<- parserCombinator charsToPromo str
+      Just (Move moveUnit startRow startCol takes (destRow, destCol) promotion, str)
+    shortMove str = do
+      (moveUnit, str) <- charToUnit str
+      (takes, str)    <- charToTakes str
+      (destCol, str) <- charToCol str
+      (destRow, str) <- charToRow str
+      (promotion, str)<- parserCombinator charsToPromo str
+      Just (Move moveUnit Nothing Nothing takes (destRow, destCol) promotion, str)
+
+validateMove :: Color -> Board -> Move -> Maybe Move
+validateMove color board move = 
+  case move of
+    --Move unit (Just row) (Just col) takes (dRow, dCol) promo -> 
+      --if isNothing $ lookup (dRow, dCol) $ validMovesForPiece (row, col) (unit, color) board then
+        --Nothing else Just move
+    Move Pawn row col False (dRow, dCol) promo -> do
+      let moves = map (+++ (dRow, dCol)) $ if color == Black then [(-1, 0), (-2, 0)] else [(1,0), (2,0)]
+      let squaresToCheck = map (\p -> (p, p `findSquare` board)) moves 
+      ((row, col), mPiece) <- find (\(pos, x) -> case x of
+                  Just (Pawn, color') -> color' == color
+                  Nothing -> False)
+                squaresToCheck
+      Just (Move Pawn (Just row) (Just col) False (dRow, dCol) Nothing)
+      
+    Move unit row col takes (dRow, dCol) promo ->
+      case unitCanTakePos (dRow, dCol) (unit, oppositeColor color) board of
+        [] -> Nothing
+        [((r, c), piece')] -> Just (Move unit (Just r) (Just c) takes (dRow, dCol) promo)
+        xs -> case (row, col) of
+          (Nothing, Nothing) -> Nothing
+          (Just x, Just y) -> (\_ -> Move unit (Just x) (Just y) takes (dRow, dCol) promo) <$> lookup (x, y) xs
+          (Just x, Nothing) -> case filter (\((x', y), piece) -> x == x') xs of
+            [((r, c), piece')] -> Just (Move unit (Just r) (Just c) takes (dRow, dCol) promo )
+          (Nothing, Just y) -> case filter (\((x, y'), piece) -> y == y') xs of
+            [((r, c), piece')] -> Just (Move unit (Just r) (Just c) takes (dRow, dCol) promo )
+            _ ->  Nothing
+    --(unit, Nothing, Nothing, takes, (dCol, dRow), promo) | unit == Pawn -> error"unimp"
+
+
+
+charToUnit :: String -> Maybe (Unit, String)
+charToUnit str = case str of
+  "" -> Nothing
+  x:xs -> case x of
+    'B' -> Just (Bishop, xs)
+    'K' -> Just (King  , xs)
+    'R' -> Just (Rook  , xs)
+    'Q' -> Just (Queen , xs)
+    'N' -> Just (Knight, xs)
+    _ -> Just (Pawn, x:xs)
+  
+charToCol :: Parser Int
+charToCol str = case str of
+  "" -> Nothing
+  x:xs -> case x of
+    x | ord 'a' <= ord x && ord x <= ord 'h' -> Just ((ord x - ord 'a'), xs)
+    _ -> Nothing
+
+charToRow :: Parser Int
+charToRow str = case str of
+  "" -> Nothing
+  x:xs -> case x of
+    x |  ord '1' <= ord x && ord x <= ord '8' -> Just ((7 - ord x + ord '1'), xs)
+    _ -> Nothing
+
+charToTakes :: Parser Bool
+charToTakes str = case str of
+  "" -> Nothing
+  'x':xs  -> Just (True, xs)
+  _ -> Just (False, str)
+
+charsToPromo :: Parser Unit
+charsToPromo str = case str of
+  '=':xs -> charToUnit xs 
+  _ -> Nothing
+
 --for printing the board
 showSquare :: Maybe Piece -> Char
 showSquare square = case square of
@@ -41,21 +151,27 @@ showPiece (unit, color) = case color of
   White -> head $ if unit == Knight then "N" else show unit
   Black -> toLower $ head $ if unit == Knight then "N" else show unit
 
-printableBoard :: Board -> [String]
-printableBoard board =
-  map (\row -> map showSquare row) board
+printableBoard :: Board -> Int -> [String]
+printableBoard board x =
+  if x == 8 then [] else
+    (show x ++ "|" ++ map showSquare (board!!x) ++ "|") : printableBoard board (x+1)
 
 --
 
 findSquare :: Pos -> Board -> Maybe Piece
 findSquare (row, col) board = board!!row!!col
 
-findPiecePos :: Piece -> Board -> Int -> Maybe Pos
-findPiecePos piece board row = case board of
-  x:xs -> case findIndex (== Just piece) x of
-    Just x -> Just (row, x)
-    Nothing -> findPiecePos piece xs (row+1)
-  [] -> Nothing
+findSquaresOfPiece :: Piece -> Board -> Int -> [Square]
+findSquaresOfPiece piece board row = case board of
+  x:xs -> case elemIndices (Just piece) x of
+    l -> map (\x -> ((row, x), Just piece)) l ++ findSquaresOfPiece piece xs (row+1)
+  [] -> []
+
+--findSquaresOfPiece :: Piece -> Board -> Int -> [Square]
+--findSquaresOfPiece piece board row = case board of
+  --x:xs -> case elemIndices (Just piece) x of
+    --l -> map (\x -> ((row, x), Just piece)) l ++ findSquaresOfPiece piece board (row+1)
+  --[] -> []
   
 pieceToDir :: Piece -> [Dir]
 pieceToDir (unit, _) = case unit of
@@ -67,16 +183,44 @@ pieceToDir (unit, _) = case unit of
   --king or queen
   _ -> [up, down, right, left, up+++right, down+++right, down+++left, up+++left]
 
-validMoves :: Pos -> Piece -> Board -> [Square]
-validMoves (row, col) piece board =
-    case piece of
+colorOccupiedSqs :: Board -> Int -> Int -> Color -> [(Pos, Piece)]
+colorOccupiedSqs board x y c
+  | x > 7 = []
+  | y > 7 = colorOccupiedSqs board (x + 1) 0 c
+  | isJust (board !! x !! y) && snd (fromJust (board!!x!!y)) == c
+    = ((x, y), fromJust (board !! x !! y)) : colorOccupiedSqs board x (y + 1) c
+  | otherwise = colorOccupiedSqs board x (y + 1) c
+
+legalMoves ::  Pos-> Piece -> Board -> [Square]
+legalMoves  (row, col) piece board =
+  moves
+  where 
+    moves = case piece of
       (Pawn, c) -> 
         let maybeMoves = map (\dir -> pawnMovesFilter (colorPawnMoves dir c) (row, col) board c) (pieceToDir (Pawn, c)) in
           catMaybes maybeMoves
-      --Just (Knight, c) -> error"implement knight move"
       piece' ->
         let movesInDirs = allSquaresPerDirs piece' (row, col) board in
           concatMap (`reachableFilter` (snd piece')) movesInDirs
+
+filterSelfCheck ::  Pos-> Piece -> Board -> [Square] -> [Square]
+filterSelfCheck (row, col) piece board  = 
+  filter (\(pos, mPiece) -> not $ checkCheck (move board ((row, col), Just piece) pos) (snd piece))
+
+validMovesForPiece' :: Pos -> Board -> [Square]
+validMovesForPiece' pos board = 
+  let piece = findSquare pos board in
+    if isNothing piece then error"no piece at this pos!!" else
+      validMovesForPiece pos (fromJust piece) board  
+validMovesForPiece ::  Pos-> Piece -> Board -> [Square]
+validMovesForPiece pos piece board = 
+  --filterSelfCheck pos piece board $ 
+  legalMoves pos piece board
+
+--validMovesForColor :: Color -> Board -> [Square]
+validMovesForColor c b = 
+ let pieces = colorOccupiedSqs b 0 0 c in
+    concatMap (\(pos, piece) -> validMovesForPiece pos piece b) pieces
 
 colorPawnMoves :: Dir -> Color -> Dir
 colorPawnMoves (row, col) color = 
@@ -91,7 +235,7 @@ pawnMovesFilter moveOption pos board color =
           case dirAbs moveOption of
             (1, 0) -> if destSquareUnoccupied then Just (movedPos, Nothing) else Nothing
             (2, 0) -> case canTwoStep pos color of 
-              True -> if isNothing (findSquare (pos +++ (colorPawnMoves (1,0) Black)) board) && destSquareUnoccupied 
+              True -> if isNothing (findSquare (pos +++ (colorPawnMoves (1,0) color)) board) && destSquareUnoccupied 
                   then Just (movedPos, Nothing) else  Nothing
               False -> Nothing
             (1, 1) -> case destinationSquare of 
@@ -143,56 +287,101 @@ squaresInDir dir pos board isMultiMove
 
 checkCheck :: Board -> Color -> Bool
 checkCheck board color =
-  --kingPos == Maybe Pos
-  let kingPos = findPiecePos (King, color) board 0 in
-    if isNothing kingPos then error "King not on board" else 
-      let possibleAttackers = map (,color) [King, Pawn, Rook, Bishop, Knight] in
-        any (\p -> pieceCanAttackPos (fromJust kingPos) p board) possibleAttackers
+  let kingPos = fst (head $ findSquaresOfPiece (King, color) board 0) in
+      not $ null $ findAttackersOfPos kingPos color board
 
+--find all the attackers of the opposite color at the given pos
+findAttackersOfPos :: Pos -> Color -> Board -> [Square]
+findAttackersOfPos pos color board = 
+  let possibleAttackers = [King, Pawn, Rook, Bishop, Knight] in
+    concatMap (\u -> unitCanTakePos pos (u, color) board) possibleAttackers
 
-pieceCanAttackPos:: Pos -> Piece -> Board -> Bool
-pieceCanAttackPos pos piece board = 
-  let opColor = oppositeColor $ snd piece in
-  case fst piece of
+-- given an input piece, can a piece of that unit take the given position?
+-- returns a list of all the sqaures with units that can do that
+unitCanTakePos:: Pos -> Piece -> Board -> [Square]
+unitCanTakePos pos (unit, color) board = 
+  let opColor = oppositeColor color in
+  case unit of
     Pawn ->
-      let attackPos'' = if snd piece == White then [(-1, -1), (-1, 1)] else [(1, -1), (1, 1)] in
+      let attackPos'' = if color == White then [(-1, -1), (-1, 1)] else [(1, -1), (1, 1)] in
         let attackPos' = map (+++ pos) attackPos'' in
           let attackPos = filter isInBounds attackPos' in
-          let diagSquares = map (`findSquare` board) attackPos in
-            elem (Just (Pawn, opColor)) diagSquares
+            let diagSquares = map (\pos -> (pos, pos `findSquare` board)) attackPos in
+              filter (\(x, y) -> y == Just (Pawn, opColor)) diagSquares
     King -> 
       let attackPos' = map (+++pos) (pieceToDir (King, opColor)) in
         let attackPos = filter isInBounds attackPos' in
-          elem (Just (King, opColor)) (map (`findSquare` board) attackPos)
-    Queen -> error "bad input"
-    _ -> findAttackersOfPos pos piece board
+          filter (\(x, y) -> y == Just (King, opColor)) (map (\pos -> (pos, pos `findSquare` board)) attackPos)
+    Knight -> 
+      let attackPos' = map (+++pos) (pieceToDir (Knight, opColor)) in
+        let attackPos = filter isInBounds attackPos' in
+          filter (\(x, y) -> y == Just (Knight, opColor)) (map (\pos -> (pos, pos `findSquare` board)) attackPos)
+    Queen -> concatMap (\u -> unitCanTakePos pos (u, color) board) [Bishop, Rook]
+    _ -> findRunnerAttackers pos (unit, opColor) board
     
-findAttackersOfPos pos (unit, color) board =
-  let unitsInSight = validMoves pos (unit, color) board in
-    let color' = oppositeColor color in
-  let potentialAttackers = if unit == Rook || unit == Bishop then [(unit, color'),(Queen, color')] else [(unit, color')] in
-  any (\(pos, piece') -> 
-    isJust piece' &&  
-    elem (fromJust piece') potentialAttackers)
-    unitsInSight
+findRunnerAttackers :: Pos -> Piece -> Board -> [Square]
+findRunnerAttackers pos (unit, color) board =
+  let opColor = oppositeColor color in
+  let unitsInSight = legalMoves pos (unit, color) board in
+    let potentialAttackers = if unit == Rook || unit == Bishop then [(unit, opColor),(Queen, opColor)] else [(unit, opColor)] in
+    filter (\(pos', mPiece) -> 
+      isJust mPiece &&  
+      elem (fromJust mPiece) potentialAttackers)
+      unitsInSight
+
+replaceSquare :: [Maybe Piece] -> Int -> Maybe Piece -> [Maybe Piece]
+replaceSquare rank file newPiece =
+  let (r1, _:r2) = splitAt file rank in
+    r1 ++ newPiece : r2
+
+  
+--move :: Board -> Move -> Board
+--move board (unit, mStartCol, mStartRow, attacking, (destCol, destRow)) = 
+move :: Board -> Square -> Pos -> Board
+move board ((rank, file), mover) (destR, destF) =
+  let mover' = fromMaybe (error "no piece at sq") mover in
+    let (r1, changeRank:r2) = splitAt rank board in
+      let board' = r1 ++ replaceSquare changeRank file Nothing : r2 in
+        let (r1', changeRank':r2') = splitAt destR board' in
+          r1' ++ (replaceSquare changeRank' destF mover : r2')
 
 isInBounds :: Pos -> Bool
 isInBounds (row, col) = 0 <= row && row <= 7 && 0 <= col && col <= 7 -- && (row /= 0 && col /= 0)
 
+mainLoop board turnColor gameComplete =
+  if gameComplete then error"game is over" else
+    do
+      putStrLn " =========="
+      printBoard board
+      putStrLn " =========="
+      putStrLn "  abcdefgh"
+      putStrLn (show turnColor ++ "'s move")
+      input <- getLine 
+      Move unit (Just startRow) (Just startCol) takes (destRow, destCol) promo <- 
+        case parseMove input >>= validateMove turnColor board . fst of
+          Nothing -> error":("
+          Just m -> pure m
+
+      let board' = move board ((startRow, startCol), Just (unit, turnColor)) (destRow, destCol)
+      mainLoop board' (oppositeColor turnColor) False
+
+
 main = do
   --pretty prints the board
-  mapM_ print $ printableBoard testBoard
+  mainLoop initb White False
+  
 
+printBoard board = mapM_ putStrLn $ printableBoard board 0
 
-initBoard = [
-  map (\x -> Just (x, White)) [Rook, Knight, Bishop, King, Queen, Bishop, Knight, Rook],
-  map (\x -> Just (Pawn, White)) [0..7],
-  map (\x -> Nothing) [0..7],
-  map (\x -> Nothing) [0..7],
-  map (\x -> Nothing) [0..7],
-  map (\x -> Nothing) [0..7],
+initb = [
+  map (\x -> Just (x, Black)) [Rook, Knight, Bishop, King, Queen, Bishop, Knight, Rook],
   map (\x -> Just (Pawn, Black)) [0..7],
-  map (\x -> Just (x, Black)) [Rook, Knight, Bishop, King, Queen, Bishop, Knight, Rook]
+  map (\x -> Nothing) [0..7],
+  map (\x -> Nothing) [0..7],
+  map (\x -> Nothing) [0..7],
+  map (\x -> Nothing) [0..7],
+  map (\x -> Just (Pawn, White)) [0..7],
+  map (\x -> Just (x, White)) [Rook, Knight, Bishop, King, Queen, Bishop, Knight, Rook]
   ]
 
 testBoard' = [
@@ -215,4 +404,26 @@ testBoard = [
   map (\x -> Just (Knight, White)) [0..7],
   map (\x -> Nothing) [0..7],
   map (\x -> Nothing) [0..7]
+  ]
+
+sc = [
+  map (\x -> if x == 4 then Just (King, Black) else Nothing) [0..7],
+  map (\x -> if x == 4 then Just (Pawn, Black) else Nothing) [0..7],
+  map (\x -> Nothing) [0..7],
+  map (\x -> Nothing) [0..7],
+  map (\x -> Nothing) [0..7],
+  map (\x -> Nothing) [0..7],
+  map (\x -> if x == 4 then Just (Rook, White) else Nothing) [0..7],
+  map (\x -> if x == 4 then Just (King, White) else Nothing) [0..7]
+  ]
+
+pt = [
+  map (\x -> Nothing) [0..6] ++ [Just (King, Black)],
+  map (\x -> Nothing) [0..7],
+  map (\x -> Nothing) [0..7],
+  [Nothing, Nothing, Nothing, Nothing, Just (Knight, Black), Nothing, Nothing, Nothing],
+  [Nothing, Nothing, Nothing, Just (Pawn, White), Nothing, Nothing, Nothing, Nothing],
+  map (\x -> Nothing) [0..7],
+  map (\x -> Nothing) [0..7],
+  map (\x -> Nothing) [0..6] ++ [Just (King, White)]
   ]
