@@ -3,6 +3,7 @@ import Data.Char
 import Data.Tuple
 import Data.Maybe
 import Data.List
+import System.IO
 
 data Unit = King | Queen | Rook | Bishop | Knight | Pawn deriving (Eq, Show)
 data Color = White | Black deriving (Eq, Show)
@@ -154,9 +155,7 @@ showPiece (unit, color) = case color of
 printableBoard :: Board -> Int -> [String]
 printableBoard board x =
   if x == 8 then [] else
-    (show x ++ "|" ++ map showSquare (board!!x) ++ "|") : printableBoard board (x+1)
-
---
+    (show (8-x) ++ "|" ++ map showSquare (board!!x) ++ "|") : printableBoard board (x+1)
 
 findSquare :: Pos -> Board -> Maybe Piece
 findSquare (row, col) board = board!!row!!col
@@ -367,6 +366,8 @@ mainLoop board turnColor gameComplete =
 
 
 main = do
+  hSetBuffering stdout NoBuffering
+  putStrLn "New Game"
   --pretty prints the board
   mainLoop initb White False
   
