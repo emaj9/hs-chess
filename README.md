@@ -9,12 +9,12 @@ command line, using terminal graphics to display the board and pieces.
 3. Enjoy your game!
 
 ### How to play
-2 players play this game together using the machine. This chess game uses [algebraic chess
+2 players play this game together using one machine. This chess game uses [algebraic chess
 notation](https://en.wikipedia.org/wiki/Algebraic_notation_(chess)). Each player
 takes a turn entering a move. If presented with an invalid input or move, the
 game will ask the player to enter a correct move in chess notation.
 
 ### Missing features
-- No castling
+- No casteling
 - No taking en passant
 - No promotion
